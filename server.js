@@ -4,9 +4,94 @@ const fs = require("fs");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ✅ TON MOT DE PASSE ICI
 const ADMIN_PASSWORD = "AdminSilverKey2";
 
+// ===============================
+// DATABASE
+// ===============================
+let database = {};
+
+try {
+    database = JSON.parse(fs.readFileSync("keys.json"));
+} catch {
+    database = {};
+}
+
+function saveDB() {
+    fs.writeFileSync("keys.json", JSON.stringify(database, null, 2));
+}
+
+// ===============================
+// VERIFY (XENO COMPATIBLE)
+// ===============================
+app.get("/verify", (req, res) => {
+    const { key, hwid } = req.query;
+
+    if (!key) return res.send("INVALID");
+
+    const data = database[key];
+
+    if (!data) return res.send("INVALID");
+
+    if (data.banned) return res.send("BANNED");
+
+    if (data.expires && Date.now() > data.expires) {
+        delete database[key];
+        saveDB();
+        return res.send("EXPIRED");
+    }
+
+    if (!data.hwid || data.hwid !== hwid) {
+        data.hwid = hwid;
+    }
+
+    data.lastUsed = Date.now();
+    saveDB();
+
+    res.send("VALID");
+});
+
+// ===============================
+// GENERATE
+// ===============================
+app.get("/generate", (req, res) => {
+    const { admin, days } = req.query;
+
+    if (admin !== ADMIN_PASSWORD) {
+        return res.json({ error: "Unauthorized" });
+    }
+
+    const key = "SD-" + Math.random().toString(36).substring(2,10).toUpperCase();
+    const expire = Date.now() + (parseInt(days) || 1) * 86400000;
+
+    database[key] = {
+        hwid: null,
+        expires: expire,
+        banned: false,
+        createdAt: Date.now(),
+        lastUsed: null
+    };
+
+    saveDB();
+
+    res.json({ key });
+});
+
+// ===============================
+// DELETE
+// ===============================
+app.get("/delete", (req, res) => {
+    const { admin, key } = req.query;
+
+    if (admin !== ADMIN_PASSWORD) {
+        return res.json({ error: "Unauthorized" });
+    }
+
+    delete database[key];
+    saveDB();
+
+    res.json({ success: true });
+});
 
 // ===============================
 // BAN
@@ -14,7 +99,7 @@ const ADMIN_PASSWORD = "AdminSilverKey2";
 app.get("/ban", (req, res) => {
     const { admin, key } = req.query;
 
-    if (admin !== AdminSilverKey2) {
+    if (admin !== ADMIN_PASSWORD) {
         return res.json({ error: "Unauthorized" });
     }
 
@@ -34,14 +119,14 @@ app.get("/ban", (req, res) => {
 app.get("/dashboard", (req, res) => {
     const { admin } = req.query;
 
-    if (admin !== AdminSilverKey2) {
+    if (admin !== ADMIN_PASSWORD) {
         return res.send("Unauthorized");
     }
 
     let html = `
     <html>
     <body style="background:#111;color:white;font-family:Arial;padding:20px">
-    <h1>💎 Silver Demon Dashboard</h1>
+    <h1>💎 Lumira Dashboard</h1>
 
     <input id="days" placeholder="Days">
     <button onclick="gen()">Generate</button>
@@ -49,19 +134,19 @@ app.get("/dashboard", (req, res) => {
     <script>
     async function gen(){
         let d = document.getElementById("days").value || 1;
-        let res = await fetch("/generate?admin=${AdminSilverKey2}&days="+d);
+        let res = await fetch("/generate?admin=${ADMIN_PASSWORD}&days="+d);
         let data = await res.json();
         alert("Key: "+data.key);
         location.reload();
     }
 
     async function del(k){
-        await fetch("/delete?admin=${AdminSilverKey2}&key="+k);
+        await fetch("/delete?admin=${ADMIN_PASSWORD}&key="+k);
         location.reload();
     }
 
     async function ban(k){
-        await fetch("/ban?admin=${AdminSilverKey2}&key="+k);
+        await fetch("/ban?admin=${ADMIN_PASSWORD}&key="+k);
         location.reload();
     }
     </script>
@@ -89,6 +174,13 @@ app.get("/dashboard", (req, res) => {
 
     html += "</body></html>";
     res.send(html);
+});
+
+// ===============================
+// ROOT TEST
+// ===============================
+app.get("/", (req, res) => {
+    res.send("API ONLINE");
 });
 
 app.listen(PORT, () => console.log("Server running"));
