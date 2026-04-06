@@ -14,7 +14,7 @@ const ADMIN_PASSWORD = "AdminSilverKey2";
 app.get("/ban", (req, res) => {
     const { admin, key } = req.query;
 
-    if (admin !== ADMIN_PASSWORD) {
+    if (admin !== AdminSilverKey2) {
         return res.json({ error: "Unauthorized" });
     }
 
@@ -34,7 +34,7 @@ app.get("/ban", (req, res) => {
 app.get("/dashboard", (req, res) => {
     const { admin } = req.query;
 
-    if (admin !== ADMIN_PASSWORD) {
+    if (admin !== AdminSilverKey2) {
         return res.send("Unauthorized");
     }
 
@@ -49,19 +49,19 @@ app.get("/dashboard", (req, res) => {
     <script>
     async function gen(){
         let d = document.getElementById("days").value || 1;
-        let res = await fetch("/generate?admin=${ADMIN_PASSWORD}&days="+d);
+        let res = await fetch("/generate?admin=${AdminSilverKey2}&days="+d);
         let data = await res.json();
         alert("Key: "+data.key);
         location.reload();
     }
 
     async function del(k){
-        await fetch("/delete?admin=${ADMIN_PASSWORD}&key="+k);
+        await fetch("/delete?admin=${AdminSilverKey2}&key="+k);
         location.reload();
     }
 
     async function ban(k){
-        await fetch("/ban?admin=${ADMIN_PASSWORD}&key="+k);
+        await fetch("/ban?admin=${AdminSilverKey2}&key="+k);
         location.reload();
     }
     </script>
