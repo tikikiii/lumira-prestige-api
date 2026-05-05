@@ -1,186 +1,153 @@
 const express = require("express");
-const fs = require("fs");
-
 const app = express();
+
+app.use(express.json());
+
 const PORT = process.env.PORT || 3000;
 
-const ADMIN_PASSWORD = "AdminSilverKey2";
+// =========================
+// 🧠 DATABASE MEMORY
+// =========================
+let keys = {};
+let logs = [];
+let blacklist = [];
 
-// ===============================
-// DATABASE
-// ===============================
-let database = {};
-
-try {
-    database = JSON.parse(fs.readFileSync("keys.json"));
-} catch {
-    database = {};
+// =========================
+// 🔑 GENERATE KEY
+// =========================
+function generateKey() {
+    return Math.random().toString(36).substring(2, 10);
 }
 
-function saveDB() {
-    fs.writeFileSync("keys.json", JSON.stringify(database, null, 2));
-}
+// create key with duration (ms)
+app.post("/create", (req, res) => {
+    const { duration } = req.body;
 
-// ===============================
-// VERIFY (XENO COMPATIBLE)
-// ===============================
-app.get("/verify", (req, res) => {
-    const { key, hwid } = req.query;
-
-    if (!key) return res.send("INVALID");
-
-    const data = database[key];
-
-    if (!data) return res.send("INVALID");
-
-    if (data.banned) return res.send("BANNED");
-
-    if (data.expires && Date.now() > data.expires) {
-        delete database[key];
-        saveDB();
-        return res.send("EXPIRED");
+    if (!duration) {
+        return res.json({ success:false, reason:"NO_DURATION" });
     }
 
-    if (!data.hwid || data.hwid !== hwid) {
-        data.hwid = hwid;
-    }
+    const key = generateKey();
 
-    data.lastUsed = Date.now();
-    saveDB();
-
-    res.send("VALID");
-});
-
-// ===============================
-// GENERATE
-// ===============================
-app.get("/generate", (req, res) => {
-    const { admin, days } = req.query;
-
-    if (admin !== ADMIN_PASSWORD) {
-        return res.json({ error: "Unauthorized" });
-    }
-
-    const key = "SD-" + Math.random().toString(36).substring(2,10).toUpperCase();
-    const expire = Date.now() + (parseInt(days) || 1) * 86400000;
-
-    database[key] = {
-        hwid: null,
-        expires: expire,
-        banned: false,
-        createdAt: Date.now(),
-        lastUsed: null
+    keys[key] = {
+        expires: Date.now() + duration,
+        hwid: null
     };
 
-    saveDB();
-
-    res.json({ key });
+    res.json({
+        success: true,
+        key: key,
+        expires: keys[key].expires
+    });
 });
 
-// ===============================
-// DELETE
-// ===============================
-app.get("/delete", (req, res) => {
-    const { admin, key } = req.query;
+// =========================
+// 🔍 VERIFY KEY + HWID + LOGS
+// =========================
+app.get("/verify", (req, res) => {
+    const { key, hwid, user, userId } = req.query;
 
-    if (admin !== ADMIN_PASSWORD) {
-        return res.json({ error: "Unauthorized" });
+    // 🚫 blacklist check
+    if (blacklist.includes(Number(userId))) {
+        return res.json({ valid:false, reason:"BLACKLISTED" });
     }
 
-    delete database[key];
-    saveDB();
+    const data = keys[key];
 
-    res.json({ success: true });
+    if (!data) {
+        return res.json({ valid:false, reason:"INVALID_KEY" });
+    }
+
+    if (Date.now() > data.expires) {
+        delete keys[key];
+        return res.json({ valid:false, reason:"EXPIRED" });
+    }
+
+    if (data.hwid && data.hwid !== hwid) {
+        return res.json({ valid:false, reason:"HWID_LOCKED" });
+    }
+
+    // bind HWID
+    data.hwid = hwid;
+
+    // LOG USER
+    logs.push({
+        user: user || "unknown",
+        userId: Number(userId) || 0,
+        key: key,
+        hwid: hwid,
+        time: Date.now()
+    });
+
+    res.json({ valid:true });
 });
 
-// ===============================
-// BAN
-// ===============================
-app.get("/ban", (req, res) => {
-    const { admin, key } = req.query;
-
-    if (admin !== ADMIN_PASSWORD) {
-        return res.json({ error: "Unauthorized" });
-    }
-
-    if (!database[key]) {
-        return res.json({ error: "Key not found" });
-    }
-
-    database[key].banned = true;
-    saveDB();
-
-    res.json({ success: true });
+// =========================
+// 📊 STATS
+// =========================
+app.get("/stats", (req, res) => {
+    res.json({
+        totalKeys: Object.keys(keys).length,
+        totalLogs: logs.length,
+        blacklistCount: blacklist.length
+    });
 });
 
-// ===============================
-// DASHBOARD
-// ===============================
-app.get("/dashboard", (req, res) => {
-    const { admin } = req.query;
-
-    if (admin !== ADMIN_PASSWORD) {
-        return res.send("Unauthorized");
-    }
-
-    let html = `
-    <html>
-    <body style="background:#111;color:white;font-family:Arial;padding:20px">
-    <h1>💎 Lumira Dashboard</h1>
-
-    <input id="days" placeholder="Days">
-    <button onclick="gen()">Generate</button>
-
-    <script>
-    async function gen(){
-        let d = document.getElementById("days").value || 1;
-        let res = await fetch("/generate?admin=${ADMIN_PASSWORD}&days="+d);
-        let data = await res.json();
-        alert("Key: "+data.key);
-        location.reload();
-    }
-
-    async function del(k){
-        await fetch("/delete?admin=${ADMIN_PASSWORD}&key="+k);
-        location.reload();
-    }
-
-    async function ban(k){
-        await fetch("/ban?admin=${ADMIN_PASSWORD}&key="+k);
-        location.reload();
-    }
-    </script>
-    `;
-
-    for (let key in database) {
-        let k = database[key];
-
-        let exp = new Date(k.expires).toLocaleString();
-        let last = k.lastUsed ? new Date(k.lastUsed).toLocaleString() : "Never";
-
-        html += `
-        <div style="background:#222;padding:10px;margin:10px;border-radius:8px">
-        <b>${key}</b><br>
-        HWID: ${k.hwid || "none"}<br>
-        Last Used: ${last}<br>
-        Exp: ${exp}<br>
-        Status: ${k.banned ? "🔴 BANNED" : "🟢 ACTIVE"}<br><br>
-
-        <button onclick="del('${key}')">Delete</button>
-        <button onclick="ban('${key}')">Ban</button>
-        </div>
-        `;
-    }
-
-    html += "</body></html>";
-    res.send(html);
+// =========================
+// 📋 GET KEYS
+// =========================
+app.get("/keys", (req, res) => {
+    res.json(keys);
 });
 
-// ===============================
-// ROOT TEST
-// ===============================
-app.get("/", (req, res) => {
-    res.send("API ONLINE");
+// =========================
+// 📊 GET LOGS
+// =========================
+app.get("/logs", (req, res) => {
+    res.json(logs.slice(-100).reverse());
 });
 
-app.listen(PORT, () => console.log("Server running"));
+// =========================
+// ❌ DELETE KEY
+// =========================
+app.delete("/delete/:key", (req, res) => {
+    const key = req.params.key;
+
+    if (keys[key]) {
+        delete keys[key];
+        return res.json({ success:true });
+    }
+
+    res.json({ success:false, reason:"NOT_FOUND" });
+});
+
+// =========================
+// 🚫 BLACKLIST USER
+// =========================
+app.post("/blacklist", (req, res) => {
+    const { userId } = req.body;
+
+    if (!blacklist.includes(Number(userId))) {
+        blacklist.push(Number(userId));
+    }
+
+    res.json({ success:true });
+});
+
+// =========================
+// ✅ REMOVE BLACKLIST
+// =========================
+app.post("/unblacklist", (req, res) => {
+    const { userId } = req.body;
+
+    blacklist = blacklist.filter(id => id !== Number(userId));
+
+    res.json({ success:true });
+});
+
+// =========================
+// 🚀 START SERVER
+// =========================
+app.listen(PORT, () => {
+    console.log("🔥 Lumira Prestige Backend Running on port " + PORT);
+});
